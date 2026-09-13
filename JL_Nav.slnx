@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/JL_Nav/JL_Nav.csproj" />
+  </Folder>
+</Solution>

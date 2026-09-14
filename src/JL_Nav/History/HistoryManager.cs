@@ -101,10 +101,34 @@ public sealed class HistoryManager : IDisposable
     public void CloseWindow(int hwnd) =>
         NativeMethods.PostMessage((IntPtr)hwnd, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
 
+    /// <summary>
+    /// Closes the real Explorer window without archiving its tree — the live
+    /// history is dropped up front so the WindowClosed event that arrives once
+    /// the window actually closes finds nothing left to archive.
+    /// </summary>
+    public void CloseWindowWithoutSaving(int hwnd)
+    {
+        if (_histories.Remove(hwnd))
+        {
+            PersistState();
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
+
+        CloseWindow(hwnd);
+    }
+
     /// <summary>Removes a closed-window entry from the archive permanently.</summary>
     public void RemoveClosedHistory(PersistedWindowHistory entry)
     {
         _state.ClosedHistories.Remove(entry);
+        PersistState();
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Empties the entire closed-windows archive.</summary>
+    public void ClearClosedHistories()
+    {
+        _state.ClosedHistories.Clear();
         PersistState();
         Changed?.Invoke(this, EventArgs.Empty);
     }

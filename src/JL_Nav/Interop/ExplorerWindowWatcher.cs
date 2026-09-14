@@ -67,8 +67,13 @@ public sealed class ExplorerWindowWatcher : IDisposable
     public void Stop()
     {
         _scanTimer.Stop();
+        // Just unhook COM events here — these windows aren't actually closing,
+        // we're only tearing down because the app itself is shutting down.
+        // Raising WindowClosed for them would make HistoryManager archive their
+        // trees as "closed" and drop them from the open-snapshot set that gets
+        // matched back up on the next app start, losing their history.
         foreach (var hwnd in _tracked.Keys.ToList())
-            Untrack(hwnd);
+            Untrack(hwnd, notify: false);
     }
 
     private void Scan()
@@ -113,7 +118,13 @@ public sealed class ExplorerWindowWatcher : IDisposable
 
         foreach (var hwnd in _tracked.Keys.ToList())
         {
-            if (!seen.Contains(hwnd))
+            // Shell.Application's Windows() collection can keep a stale entry for a
+            // window that's already been destroyed — most often one closed quickly
+            // (e.g. the active window, via the X button or Alt+F4) — so a hwnd it
+            // still reports as "seen" isn't proof the window is actually still
+            // there. Cross-check against the real window handle so we don't leave
+            // a closed window stuck looking "open" forever.
+            if (!seen.Contains(hwnd) || !NativeMethods.IsWindow((IntPtr)hwnd))
                 Untrack(hwnd);
         }
     }
@@ -143,7 +154,7 @@ public sealed class ExplorerWindowWatcher : IDisposable
         WindowOpened?.Invoke(this, new ExplorerNavigationEventArgs { Hwnd = hwnd, Url = url, DisplayName = name });
     }
 
-    private void Untrack(int hwnd)
+    private void Untrack(int hwnd, bool notify = true)
     {
         if (!_tracked.Remove(hwnd, out var tracked))
             return;
@@ -158,7 +169,8 @@ public sealed class ExplorerWindowWatcher : IDisposable
             // COM object is already gone; nothing to unhook.
         }
 
-        WindowClosed?.Invoke(this, new ExplorerWindowClosedEventArgs { Hwnd = hwnd });
+        if (notify)
+            WindowClosed?.Invoke(this, new ExplorerWindowClosedEventArgs { Hwnd = hwnd });
     }
 
     private void RaiseNavigated(int hwnd, string url)

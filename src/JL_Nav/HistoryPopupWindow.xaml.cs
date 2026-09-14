@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using JL_Nav.History;
 using JL_Nav.Interop;
 using JL_Nav.Visualization;
@@ -36,6 +37,31 @@ public partial class HistoryPopupWindow : Window
             return;
         }
 
+        // Context-menu actions (close/delete/clear) don't close this popup, so it
+        // needs to stay in sync on its own — including the delayed case where
+        // "Close window" only actually disappears once Explorer's real close is
+        // detected, which arrives asynchronously via this event.
+        _historyManager.Changed += OnHistoryChanged;
+        Closed += (_, _) => _historyManager.Changed -= OnHistoryChanged;
+
+        BuildTrees();
+    }
+
+    private void OnHistoryChanged(object? sender, EventArgs e)
+    {
+        // This can arrive from a COM callback (Explorer's OnQuit) nested inside a
+        // still-closing ContextMenu's own message loop. Rebuilding TreesPanel right
+        // there updates the data fine, but WPF doesn't flush the repaint until that
+        // nested loop unwinds, leaving stale pixels on screen until something else
+        // forces a redraw. Deferring to a fresh dispatcher frame avoids that.
+        Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(BuildTrees));
+    }
+
+    /// <summary>(Re)populates TreesPanel from the manager's current state.</summary>
+    private void BuildTrees()
+    {
+        TreesPanel.Children.Clear();
+
         if (_historyManager.Histories.Count == 0 && _historyManager.ClosedHistories.Count == 0)
         {
             TreesPanel.Children.Add(new TextBlock
@@ -54,14 +80,14 @@ public partial class HistoryPopupWindow : Window
             foreach (var history in _historyManager.Histories.Values)
             {
                 var openHwnd = history.Hwnd;
-                var closeItem = new MenuItem { Header = "Close window" };
-                closeItem.Click += (_, _) =>
-                {
-                    _historyManager.CloseWindow(openHwnd);
-                    CloseOnce();
-                };
 
-                var rowMenu = CreateRowContextMenu(closeItem);
+                var closeItem = new MenuItem { Header = "Close window" };
+                closeItem.Click += (_, _) => _historyManager.CloseWindow(openHwnd);
+
+                var closeWithoutSavingItem = new MenuItem { Header = "Close without saving Nodes" };
+                closeWithoutSavingItem.Click += (_, _) => _historyManager.CloseWindowWithoutSaving(openHwnd);
+
+                var rowMenu = CreateRowContextMenu(closeItem, closeWithoutSavingItem);
                 AddWindowHeader($"Window {openHwnd}", rowMenu);
 
                 var tree = BranchTreeRenderer.Render(history.Root, history.Current.Id, node =>
@@ -76,16 +102,14 @@ public partial class HistoryPopupWindow : Window
 
         if (_historyManager.ClosedHistories.Count > 0)
         {
-            AddSectionHeader("Closed windows (click a node to reopen there)");
+            var clearAllItem = new MenuItem { Header = "Clear all Closed Nodes" };
+            clearAllItem.Click += (_, _) => _historyManager.ClearClosedHistories();
+            AddSectionHeader("Closed windows (click a node to reopen there)", CreateRowContextMenu(clearAllItem));
 
             foreach (var entry in _historyManager.ClosedHistories)
             {
                 var deleteItem = new MenuItem { Header = "Delete" };
-                deleteItem.Click += (_, _) =>
-                {
-                    _historyManager.RemoveClosedHistory(entry);
-                    CloseOnce();
-                };
+                deleteItem.Click += (_, _) => _historyManager.RemoveClosedHistory(entry);
 
                 var rowMenu = CreateRowContextMenu(deleteItem);
                 AddWindowHeader($"Window {entry.Hwnd} — closed {entry.ClosedAt:t}", rowMenu);
@@ -101,11 +125,13 @@ public partial class HistoryPopupWindow : Window
         }
     }
 
-    private void AddSectionHeader(string text) => TreesPanel.Children.Add(new TextBlock
+    private void AddSectionHeader(string text, ContextMenu? contextMenu = null) => TreesPanel.Children.Add(new TextBlock
     {
         Text = text,
         FontWeight = FontWeights.Bold,
-        Margin = new Thickness(4, 12, 4, 4)
+        Margin = new Thickness(4, 12, 4, 4),
+        Background = Brushes.Transparent,
+        ContextMenu = contextMenu
     });
 
     private void AddWindowHeader(string text, ContextMenu? contextMenu = null) => TreesPanel.Children.Add(new TextBlock
@@ -119,12 +145,14 @@ public partial class HistoryPopupWindow : Window
         ContextMenu = contextMenu
     });
 
-    /// <summary>Builds a one-item ContextMenu shared by a row's header and its tree
-    /// canvas, so right-clicking anywhere on the row — the label or the branch
-    /// diagram itself — shows the same menu.</summary>
-    private static ContextMenu CreateRowContextMenu(MenuItem item)
+    /// <summary>Builds a ContextMenu shared by a row's header and its tree canvas,
+    /// so right-clicking anywhere on the row — the label or the branch diagram
+    /// itself — shows the same menu.</summary>
+    private static ContextMenu CreateRowContextMenu(params MenuItem[] items)
     {
-        var menu = new ContextMenu { Items = { item } };
+        var menu = new ContextMenu();
+        foreach (var item in items)
+            menu.Items.Add(item);
 
         // A ContextMenu's own popup doesn't inherit Topmost from its owner window,
         // so on a Topmost="True" window (like this popup) it renders invisibly

@@ -4,7 +4,7 @@ namespace JL_Nav;
 
 internal static class Diagnostics
 {
-    private static readonly string LogPath = Path.Combine(Path.GetTempPath(), "JL_Nav_crash.log");
+    public static string LogPath { get; } = Path.Combine(Path.GetTempPath(), "JL_Nav_crash.log");
 
     public static void Log(string message)
     {
@@ -18,5 +18,18 @@ internal static class Diagnostics
     public static void LogException(string source, Exception? ex)
     {
         Log($"{source}:{Environment.NewLine}{ex}");
+    }
+
+    /// <summary>Opens the log file in the user's default viewer, creating it first if nothing has been logged yet.</summary>
+    public static void OpenLog()
+    {
+        try
+        {
+            if (!File.Exists(LogPath))
+                File.WriteAllText(LogPath, string.Empty);
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(LogPath) { UseShellExecute = true });
+        }
+        catch { /* best effort */ }
     }
 }

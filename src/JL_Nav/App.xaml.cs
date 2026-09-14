@@ -76,6 +76,8 @@ public partial class App : Application
         menu.Items.Add("Show history", null, (_, _) => ShowPopup());
         menu.Items.Add(startWithWindowsItem);
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Open diagnostics log", null, (_, _) => Diagnostics.OpenLog());
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => ExitApp());
         _trayIcon.ContextMenuStrip = menu;
     }

@@ -8,6 +8,7 @@ using Application = System.Windows.Application;
 using MouseButtons = System.Windows.Forms.MouseButtons;
 using MouseEventArgs = System.Windows.Forms.MouseEventArgs;
 using Point = System.Windows.Point;
+using Windows.ApplicationModel;
 
 namespace JL_Nav;
 
@@ -67,10 +68,23 @@ public partial class App : Application
 
         var startWithWindowsItem = new ToolStripMenuItem("Start with Windows")
         {
-            Checked = StartupManager.IsEnabled,
             CheckOnClick = true
         };
-        startWithWindowsItem.Click += (_, _) => StartupManager.SetEnabled(startWithWindowsItem.Checked);
+        startWithWindowsItem.Click += async (_, _) =>
+        {
+            var wantEnabled = startWithWindowsItem.Checked;
+            try
+            {
+                var state = await StartupManager.SetEnabledAsync(wantEnabled);
+                ApplyStartupState(startWithWindowsItem, state);
+            }
+            catch (Exception ex)
+            {
+                Diagnostics.LogException("StartupManager.SetEnabledAsync failed", ex);
+                startWithWindowsItem.Checked = !wantEnabled; // revert the optimistic checkbox flip
+            }
+        };
+        _ = InitializeStartupMenuItemAsync(startWithWindowsItem);
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Show history", null, (_, _) => ShowPopup());
@@ -80,6 +94,30 @@ public partial class App : Application
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => ExitApp());
         _trayIcon.ContextMenuStrip = menu;
+    }
+
+    private static async Task InitializeStartupMenuItemAsync(ToolStripMenuItem item)
+    {
+        try
+        {
+            ApplyStartupState(item, await StartupManager.GetStateAsync());
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.LogException("StartupManager.GetStateAsync failed", ex);
+        }
+    }
+
+    private static void ApplyStartupState(ToolStripMenuItem item, StartupTaskState state)
+    {
+        item.Checked = state is StartupTaskState.Enabled or StartupTaskState.EnabledByPolicy;
+
+        // The user turned this off from Windows Settings/Task Manager directly — we can't
+        // re-enable it in code, so disable the menu item instead of letting it silently fail.
+        item.Enabled = state != StartupTaskState.DisabledByUser;
+        item.Text = state == StartupTaskState.DisabledByUser
+            ? "Start with Windows (turned off in Windows Settings)"
+            : "Start with Windows";
     }
 
     private void TrayIcon_Click(object? sender, EventArgs e)

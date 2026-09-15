@@ -1,38 +1,36 @@
-using Microsoft.Win32;
+using Windows.ApplicationModel;
 
 namespace JL_Nav.Interop;
 
 /// <summary>
-/// Toggles launching JL_Nav at Windows login via the per-user Run key
-/// (HKCU\...\CurrentVersion\Run) — no admin rights needed, and off by default.
+/// Toggles launching JL_Nav at Windows login via the packaged app's startup task
+/// (declared in Package.appxmanifest as TaskId "JL_NavStartupTask") — off by default,
+/// no admin rights needed. Replaces the old per-user Run-key approach: MSIX packaging
+/// virtualizes registry writes, so Windows won't honor a Run-key entry for login startup
+/// from a packaged app.
 /// </summary>
 internal static class StartupManager
 {
-    private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string ValueName = "JL_Nav";
+    private const string TaskId = "JL_NavStartupTask";
 
-    public static bool IsEnabled
+    public static async Task<StartupTaskState> GetStateAsync()
     {
-        get
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: false);
-            return key?.GetValue(ValueName) is string value && value.Length > 0;
-        }
+        var task = await StartupTask.GetAsync(TaskId);
+        return task.State;
     }
 
-    public static void SetEnabled(bool enabled)
+    /// <returns>The resulting state, so the caller can reflect what actually happened
+    /// rather than assuming the request succeeded.</returns>
+    public static async Task<StartupTaskState> SetEnabledAsync(bool enabled)
     {
-        using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true)
-            ?? Registry.CurrentUser.CreateSubKey(RunKeyPath);
+        var task = await StartupTask.GetAsync(TaskId);
 
-        if (enabled)
+        if (!enabled)
         {
-            if (Environment.ProcessPath is { } exePath)
-                key.SetValue(ValueName, $"\"{exePath}\"");
+            task.Disable();
+            return StartupTaskState.Disabled;
         }
-        else
-        {
-            key.DeleteValue(ValueName, throwOnMissingValue: false);
-        }
+
+        return await task.RequestEnableAsync();
     }
 }
